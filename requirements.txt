@@ -1,0 +1,9 @@
+Flask
+flask-cors
+numpy
+soundfile
+torch
+requests
+transformers
+gtts
+librosa
