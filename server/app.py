@@ -77,10 +77,10 @@ def chat():
         history.append(f"User: {user_input}")
         history = history[-max_turns * 2:]
 
-        response = requests.post(
-            "http://localhost:11434/api/generate",
-            json={"model": "llama3", "prompt": "\n".join(history) + "\nAI:", "stream": False}
-        )
+        import os
+        ollama_api_url = os.environ.get("OLLAMA_API_URL", "http://localhost:11434/api/generate")
+        response = requests.post(ollama_api_url, json={"model": "llama3", "prompt": "\n".join(history) + "\nAI:", "stream": False}  )
+
         response.raise_for_status()
         ai_response = response.json().get("response", "[No response]")
 
