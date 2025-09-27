@@ -3,11 +3,22 @@
 FROM node:18-alpine AS frontend-build
 WORKDIR /app
 
-# Copy the entire client directory first
-COPY client/ ./
+# Debug: List what's in the current directory
+RUN ls -la
+
+# Copy package files first
+COPY client/package.json ./
+COPY client/package-lock.json ./
+
+# Debug: Verify files were copied
+RUN ls -la
 
 # Install dependencies
 RUN npm install --no-audit --no-fund
+
+# Copy the rest of the client code
+COPY client/src ./src
+COPY client/public ./public
 
 # Build the React app
 RUN npm run build

@@ -27,3 +27,5 @@ coverage.xml
 *.cover
 *.log
 .DS_Store
+client/.git
+client/node_modules
