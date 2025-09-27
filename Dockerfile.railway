@@ -3,14 +3,11 @@
 FROM node:18-alpine AS frontend-build
 WORKDIR /app
 
-# Copy package files first for better caching
-COPY client/package*.json ./
-
-# Install dependencies with verbose output for debugging
-RUN npm install --verbose --no-audit --no-fund
-
-# Copy source code
+# Copy the entire client directory first
 COPY client/ ./
+
+# Install dependencies
+RUN npm install --no-audit --no-fund
 
 # Build the React app
 RUN npm run build
