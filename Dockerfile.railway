@@ -1,0 +1,78 @@
+# Multi-stage build for Railway deployment
+# Stage 1: Build React frontend
+FROM node:18 AS frontend-build
+WORKDIR /app/frontend
+COPY client/package*.json ./
+RUN npm install
+COPY client/ ./
+RUN npm run build
+
+# Stage 2: Python backend with frontend served
+FROM ubuntu:22.04
+
+# Install system dependencies
+RUN apt-get update && \
+    apt-get install -y python3 python3-pip curl ffmpeg nginx && \
+    rm -rf /var/lib/apt/lists/*
+
+# Set working directory
+WORKDIR /app
+
+# Copy requirements and install Python packages
+COPY requirements.txt ./
+RUN pip3 install --no-cache-dir -r requirements.txt
+
+# Copy server code
+COPY server ./server
+
+# Copy built frontend from stage 1
+COPY --from=frontend-build /app/frontend/build /var/www/html
+
+# Configure nginx to serve React app and proxy API calls
+RUN echo 'server { \
+    listen 80; \
+    server_name _; \
+    root /var/www/html; \
+    index index.html; \
+    \
+    # Serve React app for all routes except /api \
+    location / { \
+        try_files $uri $uri/ /index.html; \
+    } \
+    \
+    # Proxy API calls to Flask backend \
+    location /api/ { \
+        proxy_pass http://localhost:8000/; \
+        proxy_set_header Host $host; \
+        proxy_set_header X-Real-IP $remote_addr; \
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for; \
+        proxy_set_header X-Forwarded-Proto $scheme; \
+    } \
+    \
+    # Proxy audio files \
+    location /audio/ { \
+        proxy_pass http://localhost:8000/audio/; \
+        proxy_set_header Host $host; \
+        proxy_set_header X-Real-IP $remote_addr; \
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for; \
+        proxy_set_header X-Forwarded-Proto $scheme; \
+    } \
+}' > /etc/nginx/sites-available/default
+
+# Set environment variables
+ENV FLASK_APP=app.py
+ENV FLASK_ENV=production
+ENV PORT=8000
+
+# Expose port
+EXPOSE 80
+
+# Create startup script
+RUN echo '#!/bin/bash\n\
+# Start Flask in background\n\
+python3 server/app.py &\n\
+# Start nginx in foreground\n\
+nginx -g "daemon off;"' > /app/start.sh && chmod +x /app/start.sh
+
+# Start both services
+CMD ["/app/start.sh"]

@@ -23,7 +23,7 @@ def convert_to_wav(input_path, output_path):
     ], check=True)
 
 app = Flask(__name__)
-CORS(app, origins=["http://localhost:3000"], supports_credentials=True)
+CORS(app, origins=["*"], supports_credentials=True)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -82,6 +82,7 @@ def chat():
 
         
         ollama_api_url = os.environ.get("OLLAMA_API_URL", "http://localhost:11434/api/generate")
+        logger.info(f"Using Ollama URL: {ollama_api_url}")
         response = requests.post(ollama_api_url, json={"model": "llama3", "prompt": "\n".join(history) + "\nAI:", "stream": False}  )
 
         response.raise_for_status()

@@ -1,5 +1,12 @@
 version: '3.8'
 services:
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+
   backend:
     build:
       context: .
@@ -7,8 +14,9 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - OLLAMA_API_URL=http://host.docker.internal:11434/api/generate
-
+      - OLLAMA_API_URL=http://ollama:11434/api/generate
+    depends_on:
+      - ollama
 
   frontend:
     build:
@@ -17,4 +25,9 @@ services:
     ports:
       - "3000:80"
     environment:
-      - REACT_APP_API_URL=http://localhost:8000
+      - REACT_APP_API_URL=http://backend:8000
+    depends_on:
+      - backend
+
+volumes:
+  ollama-data: {}
