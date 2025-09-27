@@ -1,10 +1,18 @@
 # Multi-stage build for Railway deployment
 # Stage 1: Build React frontend
-FROM node:18 AS frontend-build
+FROM node:18-alpine AS frontend-build
 WORKDIR /app
+
+# Copy package files first for better caching
 COPY client/package*.json ./
-RUN npm install
+
+# Install dependencies with verbose output for debugging
+RUN npm install --verbose --no-audit --no-fund
+
+# Copy source code
 COPY client/ ./
+
+# Build the React app
 RUN npm run build
 
 # Stage 2: Python backend with frontend served
