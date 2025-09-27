@@ -1,3 +1,4 @@
+from fileinput import filename
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 import numpy as np
@@ -12,6 +13,8 @@ import os
 import subprocess
 import time
 from uuid import uuid4
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
 
 def convert_to_wav(input_path, output_path):
     subprocess.run([
@@ -77,7 +80,7 @@ def chat():
         history.append(f"User: {user_input}")
         history = history[-max_turns * 2:]
 
-        import os
+        
         ollama_api_url = os.environ.get("OLLAMA_API_URL", "http://localhost:11434/api/generate")
         response = requests.post(ollama_api_url, json={"model": "llama3", "prompt": "\n".join(history) + "\nAI:", "stream": False}  )
 
@@ -89,14 +92,17 @@ def chat():
         # Generate unique audio filename
         audio_id = str(uuid4())
         filename = f"reply_{audio_id}.mp3"
+        full_audio_path = os.path.join(BASE_DIR, filename)
         tts = gTTS(text=ai_response, lang='en')
-        tts.save(filename)
+        tts.save(full_audio_path)
 
-        # Cleanup old files (older than 5 min)
-        for f in os.listdir():
+
+        for f in os.listdir(BASE_DIR):
             if f.startswith("reply_") and f.endswith(".mp3"):
-                if (time.time() - os.path.getctime(f)) > 300:
-                    os.remove(f)
+                full_path = os.path.join(BASE_DIR, f)
+                if (time.time() - os.path.getctime(full_path)) > 300:
+                    os.remove(full_path)
+
 
         return jsonify({
             "reply": ai_response,
@@ -111,9 +117,11 @@ def chat():
 @app.route("/audio/<audio_id>")
 def get_audio(audio_id):
     filename = f"reply_{audio_id}.mp3"
-    if not os.path.exists(filename):
+    full_audio_path = os.path.join(BASE_DIR, filename)
+    if not os.path.exists(full_audio_path):
         return "Audio not found", 404
-    return send_file(filename, mimetype="audio/mpeg")
+    return send_file(full_audio_path, mimetype="audio/mpeg")
 
 if __name__ == "__main__":
-    app.run(port=8000)
+    app.run(host="0.0.0.0", port=8000)
+
