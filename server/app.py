@@ -100,10 +100,21 @@ def chat():
         models_response = requests.get(f"{ollama_base_url}/api/tags")
         logger.info(f"Available models: {models_response.text}")
         
-        response = requests.post(ollama_api_url, json={"model": "llama3.2", "prompt": "\n".join(history) + "\nAI:", "stream": False})
-
-        response.raise_for_status()
-        ai_response = response.json().get("response", "[No response]")
+        # Try different model names that might be available
+        model_names = ["llama3.2:1b", "llama3.2", "llama3", "llama2"]
+        
+        ai_response = "[No response]"
+        for model_name in model_names:
+            try:
+                logger.info(f"Trying model: {model_name}")
+                response = requests.post(ollama_api_url, json={"model": model_name, "prompt": "\n".join(history) + "\nAI:", "stream": False})
+                response.raise_for_status()
+                ai_response = response.json().get("response", "[No response]")
+                logger.info(f"Success with model: {model_name}")
+                break
+            except Exception as e:
+                logger.info(f"Model {model_name} failed: {str(e)}")
+                continue
 
         history.append(f"AI: {ai_response}")
 
