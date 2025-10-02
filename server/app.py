@@ -134,6 +134,10 @@ def get_audio(audio_id):
         return "Audio not found", 404
     return send_file(full_audio_path, mimetype="audio/mpeg")
 
+@app.route("/health")
+def health():
+    return {"status": "healthy", "message": "App is running"}, 200
+
 @app.route("/")
 def index():
     html_template = """
@@ -363,5 +367,6 @@ def index():
     return render_template_string(html_template)
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8000)
+    port = int(os.environ.get("PORT", 8000))
+    app.run(host="0.0.0.0", port=port, debug=False)
 
