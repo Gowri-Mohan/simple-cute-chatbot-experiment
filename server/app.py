@@ -1,5 +1,5 @@
 from fileinput import filename
-from flask import Flask, request, jsonify, send_file
+from flask import Flask, request, jsonify, send_file, render_template_string
 from flask_cors import CORS
 import numpy as np
 import soundfile as sf
@@ -122,6 +122,234 @@ def get_audio(audio_id):
     if not os.path.exists(full_audio_path):
         return "Audio not found", 404
     return send_file(full_audio_path, mimetype="audio/mpeg")
+
+@app.route("/")
+def index():
+    html_template = """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>✨ GOW'S CHAT PAL ✨</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Arial', sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            color: white;
+        }
+        
+        .container {
+            text-align: center;
+            padding: 2rem;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 20px;
+            backdrop-filter: blur(10px);
+            box-shadow: 0 8px 32px rgba(31, 38, 135, 0.37);
+            border: 1px solid rgba(255, 255, 255, 0.18);
+            max-width: 600px;
+            width: 90%;
+        }
+        
+        h1 {
+            font-size: 2.5rem;
+            margin-bottom: 2rem;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+        
+        .chat-window {
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 15px;
+            padding: 2rem;
+            margin: 2rem 0;
+            min-height: 150px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .bot-avatar {
+            font-size: 3rem;
+            margin-bottom: 1rem;
+        }
+        
+        .chat-response {
+            font-size: 1.2rem;
+            line-height: 1.6;
+            text-align: center;
+        }
+        
+        .btn-wrapper {
+            display: flex;
+            gap: 1rem;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+        
+        .btn {
+            padding: 1rem 2rem;
+            font-size: 1.1rem;
+            border: none;
+            border-radius: 50px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-weight: bold;
+            min-width: 150px;
+        }
+        
+        .btn.start {
+            background: linear-gradient(45deg, #ff6b6b, #feca57);
+            color: white;
+        }
+        
+        .btn.stop {
+            background: linear-gradient(45deg, #ff7675, #fd79a8);
+            color: white;
+        }
+        
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+        }
+        
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .status-indicator {
+            margin-top: 1rem;
+            font-size: 1rem;
+            min-height: 1.5rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>✨ GOW'S CHAT PAL ✨</h1>
+        <div class="chat-window">
+            <div class="bot-avatar">🌈</div>
+            <p class="chat-response" id="response">✨ Ready to chat with you!</p>
+        </div>
+        <div class="btn-wrapper">
+            <button class="btn start" id="startBtn" onclick="handleStart()">
+                🎙️ Start Talking
+            </button>
+            <button class="btn stop" id="stopBtn" onclick="handleStop()" disabled>
+                ⛔ Stop
+            </button>
+        </div>
+        <div class="status-indicator" id="status"></div>
+        <audio id="audioPlayer" style="display: none;"></audio>
+    </div>
+
+    <script>
+        let isRecording = false;
+        let mediaRecorder = null;
+        let isPlaying = false;
+
+        const responseEl = document.getElementById('response');
+        const startBtn = document.getElementById('startBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const statusEl = document.getElementById('status');
+        const audioPlayer = document.getElementById('audioPlayer');
+
+        async function handleStart() {
+            isRecording = true;
+            startBtn.disabled = true;
+            stopBtn.disabled = false;
+            responseEl.textContent = "🎧 Listening... tell me everything!";
+            
+            try {
+                const audioBlob = await startRecording();
+                const formData = new FormData();
+                formData.append("audio", audioBlob, "recording.wav");
+
+                const result = await fetch('/chat', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await result.json();
+
+                if (data.error) {
+                    throw new Error(data.error);
+                }
+                
+                responseEl.textContent = data.reply;
+
+                // Play the audio reply
+                const audioUrl = `/audio/${data.audio_id}?t=${Date.now()}`;
+                audioPlayer.src = audioUrl;
+                audioPlayer.play();
+                
+            } catch (error) {
+                console.error('Error:', error);
+                responseEl.textContent = `❗ ${error.message || "Something went wrong"}`;
+            } finally {
+                isRecording = false;
+                startBtn.disabled = false;
+                stopBtn.disabled = true;
+            }
+        }
+
+        function handleStop() {
+            if (mediaRecorder) {
+                mediaRecorder.stop();
+            }
+            isRecording = false;
+            startBtn.disabled = false;
+            stopBtn.disabled = true;
+            responseEl.textContent = "🛑 Stopped listening. I'm still here for you 💖";
+            audioPlayer.pause();
+            audioPlayer.currentTime = 0;
+        }
+
+        function startRecording() {
+            return new Promise(async (resolve) => {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                const recorder = new MediaRecorder(stream);
+                const audioChunks = [];
+
+                recorder.ondataavailable = (event) => {
+                    audioChunks.push(event.data);
+                };
+
+                recorder.onstop = () => {
+                    const audioBlob = new Blob(audioChunks, { type: "audio/webm" });
+                    resolve(audioBlob);
+                };
+
+                mediaRecorder = recorder;
+                recorder.start();
+            });
+        }
+
+        audioPlayer.onplay = () => {
+            statusEl.textContent = "🔊 Playing response...";
+        };
+
+        audioPlayer.onended = () => {
+            statusEl.textContent = "";
+        };
+    </script>
+</body>
+</html>
+    """
+    return render_template_string(html_template)
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8000)
