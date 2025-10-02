@@ -92,9 +92,15 @@ def chat():
         history = history[-max_turns * 2:]
 
         
-        ollama_api_url = os.environ.get("OLLAMA_API_URL", "http://localhost:11434/api/generate")
+        ollama_base_url = os.environ.get("OLLAMA_API_URL", "http://localhost:11434/api/generate").replace("/api/generate", "")
+        ollama_api_url = f"{ollama_base_url}/api/generate"
         logger.info(f"Using Ollama URL: {ollama_api_url}")
-        response = requests.post(ollama_api_url, json={"model": "llama3", "prompt": "\n".join(history) + "\nAI:", "stream": False}  )
+        
+        # First check if llama3 model is available
+        models_response = requests.get(f"{ollama_base_url}/api/tags")
+        logger.info(f"Available models: {models_response.text}")
+        
+        response = requests.post(ollama_api_url, json={"model": "llama3.2", "prompt": "\n".join(history) + "\nAI:", "stream": False})
 
         response.raise_for_status()
         ai_response = response.json().get("response", "[No response]")
