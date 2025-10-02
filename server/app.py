@@ -29,8 +29,18 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 device = torch.device("mps") if torch.backends.mps.is_available() else torch.device("cpu")
-processor = WhisperProcessor.from_pretrained("openai/whisper-base")
-model = WhisperForConditionalGeneration.from_pretrained("openai/whisper-base").to(device)
+
+# Load models lazily to avoid startup delays
+processor = None
+model = None
+
+def load_models():
+    global processor, model
+    if processor is None or model is None:
+        logger.info("Loading Whisper models...")
+        processor = WhisperProcessor.from_pretrained("openai/whisper-base")
+        model = WhisperForConditionalGeneration.from_pretrained("openai/whisper-base").to(device)
+        logger.info("Models loaded successfully!")
 
 history = []
 sample_rate = 16000
@@ -38,6 +48,7 @@ max_turns = 5
 
 def transcribe_audio(file_path):
     try:
+        load_models()  # Load models when first needed
         audio_input, sr = sf.read(file_path)
         if sr != sample_rate:
             audio_input = librosa.resample(audio_input, orig_sr=sr, target_sr=sample_rate)
