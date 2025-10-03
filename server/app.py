@@ -140,8 +140,18 @@ def chat():
         ollama_api_url = f"{ollama_base_url}/api/generate"
         logger.info(f"Using Ollama URL: {ollama_api_url}")
         
+        # Test connection to Ollama first
+        try:
+            test_response = requests.get(f"{ollama_base_url}/api/tags", timeout=10)
+            logger.info(f"Ollama connection test: {test_response.status_code}")
+            if test_response.status_code == 200:
+                available_models = test_response.json().get("models", [])
+                logger.info(f"Available models: {[m.get('name') for m in available_models]}")
+        except Exception as e:
+            logger.error(f"Ollama connection test failed: {str(e)}")
+        
         # Try different model names that might be available (prioritize smaller models)
-        model_names = ["llama3.2:1b", "llama3.2", "llama3", "llama2"]
+        model_names = ["llama3:latest", "llama3.2:1b", "llama3.2", "llama3", "llama2"]
         
         ai_response = "I'm sorry, I'm having trouble connecting to the AI service right now. Please try again in a moment."
         
