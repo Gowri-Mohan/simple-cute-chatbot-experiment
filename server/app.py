@@ -64,7 +64,8 @@ def load_models():
     finally:
         models_loading = False
 
-history = []
+# Store conversation history per session/user
+conversation_sessions = {}
 sample_rate = 16000
 max_turns = 5
 
@@ -108,8 +109,12 @@ def transcribe_audio(file_path):
 
 @app.route("/chat", methods=["POST"])
 def chat():
-    global history
     try:
+        # Get or create session ID from request
+        session_id = request.headers.get('X-Session-ID', str(uuid4()))
+        
+        # Get conversation history for this session
+        history = conversation_sessions.get(session_id, [])
         logger.info("Request received with files: %s", request.files.keys())
         if "audio" not in request.files:
             logger.error("No audio file in request")
@@ -188,6 +193,9 @@ def chat():
                 continue
 
         history.append(f"AI: {ai_response}")
+        
+        # Save updated history for this session
+        conversation_sessions[session_id] = history
 
         # Generate unique audio filename
         audio_id = str(uuid4())
@@ -225,7 +233,8 @@ def chat():
         return jsonify({
             "reply": ai_response,
             "history": history,
-            "audio_id": audio_id
+            "audio_id": audio_id,
+            "session_id": session_id
         })
 
     except Exception as e:
@@ -390,6 +399,7 @@ def index():
         let isRecording = false;
         let mediaRecorder = null;
         let isPlaying = false;
+        let sessionId = null;
 
         const responseEl = document.getElementById('response');
         const startBtn = document.getElementById('startBtn');
@@ -414,7 +424,10 @@ def index():
 
                 const result = await fetch('/chat', {
                     method: 'POST',
-                    body: formData
+                    body: formData,
+                    headers: {
+                        'X-Session-ID': sessionId || ''
+                    }
                 });
 
                 if (!result.ok) {
@@ -425,6 +438,11 @@ def index():
 
                 if (data.error) {
                     throw new Error(data.error);
+                }
+                
+                // Store session ID for future requests
+                if (data.session_id) {
+                    sessionId = data.session_id;
                 }
                 
                 responseEl.textContent = data.reply;
