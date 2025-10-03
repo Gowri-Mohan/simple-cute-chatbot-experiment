@@ -169,17 +169,19 @@ def chat():
                         "options": {
                             "temperature": 0.7,
                             "top_p": 0.9,
-                            "max_tokens": 150  # Limit response length for faster generation
+                            "num_predict": 50,  # Limit response length for faster generation
+                            "num_ctx": 512,     # Smaller context window
+                            "num_thread": 2     # Limit CPU threads
                         }
                     },
-                    timeout=30  # 30 second timeout
+                    timeout=120  # 2 minute timeout for slower models
                 )
                 response.raise_for_status()
                 ai_response = response.json().get("response", "[No response]")
                 logger.info(f"Success with model: {model_name}")
                 break
             except requests.exceptions.Timeout:
-                logger.warning(f"Model {model_name} timed out after 30 seconds")
+                logger.warning(f"Model {model_name} timed out after 120 seconds")
                 continue
             except Exception as e:
                 logger.info(f"Model {model_name} failed: {str(e)}")
