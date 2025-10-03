@@ -1,5 +1,5 @@
 from fileinput import filename
-from flask import Flask, request, jsonify, send_file, render_template_string
+from flask import Flask, request, jsonify, send_file, render_template_string, Response
 from flask_cors import CORS
 import numpy as np
 import soundfile as sf
@@ -13,6 +13,8 @@ import os
 import subprocess
 import time
 from uuid import uuid4
+import threading
+import queue
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
@@ -28,19 +30,39 @@ CORS(app, origins=["*"], supports_credentials=True)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-device = torch.device("mps") if torch.backends.mps.is_available() else torch.device("cpu")
+# Use CPU for better compatibility in cloud environments
+device = torch.device("cpu")
 
 # Load models lazily to avoid startup delays
 processor = None
 model = None
+models_loading = False
+models_loaded = False
 
 def load_models():
-    global processor, model
-    if processor is None or model is None:
+    global processor, model, models_loading, models_loaded
+    if models_loaded:
+        return True
+    
+    if models_loading:
+        # Wait for another thread to finish loading
+        while models_loading:
+            time.sleep(0.1)
+        return models_loaded
+    
+    models_loading = True
+    try:
         logger.info("Loading Whisper models...")
         processor = WhisperProcessor.from_pretrained("openai/whisper-base")
         model = WhisperForConditionalGeneration.from_pretrained("openai/whisper-base").to(device)
+        models_loaded = True
         logger.info("Models loaded successfully!")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to load models: {str(e)}")
+        return False
+    finally:
+        models_loading = False
 
 history = []
 sample_rate = 16000
@@ -48,16 +70,38 @@ max_turns = 5
 
 def transcribe_audio(file_path):
     try:
-        load_models()  # Load models when first needed
+        if not load_models():
+            raise Exception("Failed to load Whisper models")
+        
+        logger.info("Starting audio transcription...")
         audio_input, sr = sf.read(file_path)
+        
+        # Limit audio length to prevent timeout (max 30 seconds)
+        max_samples = sample_rate * 30
+        if len(audio_input) > max_samples:
+            audio_input = audio_input[:max_samples]
+            logger.info("Audio truncated to 30 seconds")
+        
         if sr != sample_rate:
             audio_input = librosa.resample(audio_input, orig_sr=sr, target_sr=sample_rate)
         if audio_input.ndim > 1:
             audio_input = np.mean(audio_input, axis=1)
+        
         input_features = processor(audio_input, sampling_rate=sample_rate, return_tensors="pt").input_features.to(device)
+        
         with torch.no_grad():
-            predicted_ids = model.generate(input_features)
-        return processor.batch_decode(predicted_ids, skip_special_tokens=True)[0]
+            # Use faster generation parameters
+            predicted_ids = model.generate(
+                input_features,
+                max_length=448,
+                num_beams=1,  # Faster than beam search
+                do_sample=False,
+                early_stopping=True
+            )
+        
+        result = processor.batch_decode(predicted_ids, skip_special_tokens=True)[0]
+        logger.info("Transcription completed successfully")
+        return result
     except Exception as e:
         logger.error(f"Transcription error: {str(e)}")
         raise
@@ -96,22 +140,37 @@ def chat():
         ollama_api_url = f"{ollama_base_url}/api/generate"
         logger.info(f"Using Ollama URL: {ollama_api_url}")
         
-        # First check if llama3 model is available
-        models_response = requests.get(f"{ollama_base_url}/api/tags")
-        logger.info(f"Available models: {models_response.text}")
-        
-        # Try different model names that might be available
+        # Try different model names that might be available (prioritize smaller models)
         model_names = ["llama3.2:1b", "llama3.2", "llama3", "llama2"]
         
-        ai_response = "[No response]"
+        ai_response = "I'm sorry, I'm having trouble connecting to the AI service right now. Please try again in a moment."
+        
         for model_name in model_names:
             try:
                 logger.info(f"Trying model: {model_name}")
-                response = requests.post(ollama_api_url, json={"model": model_name, "prompt": "\n".join(history) + "\nAI:", "stream": False})
+                
+                # Add timeout and optimize request
+                response = requests.post(
+                    ollama_api_url, 
+                    json={
+                        "model": model_name, 
+                        "prompt": "\n".join(history) + "\nAI:", 
+                        "stream": False,
+                        "options": {
+                            "temperature": 0.7,
+                            "top_p": 0.9,
+                            "max_tokens": 150  # Limit response length for faster generation
+                        }
+                    },
+                    timeout=30  # 30 second timeout
+                )
                 response.raise_for_status()
                 ai_response = response.json().get("response", "[No response]")
                 logger.info(f"Success with model: {model_name}")
                 break
+            except requests.exceptions.Timeout:
+                logger.warning(f"Model {model_name} timed out after 30 seconds")
+                continue
             except Exception as e:
                 logger.info(f"Model {model_name} failed: {str(e)}")
                 continue
@@ -122,15 +181,33 @@ def chat():
         audio_id = str(uuid4())
         filename = f"reply_{audio_id}.mp3"
         full_audio_path = os.path.join(BASE_DIR, filename)
-        tts = gTTS(text=ai_response, lang='en')
-        tts.save(full_audio_path)
+        
+        try:
+            logger.info("Generating audio response...")
+            # Limit text length for faster TTS generation
+            tts_text = ai_response[:500] if len(ai_response) > 500 else ai_response
+            tts = gTTS(text=tts_text, lang='en', slow=False)
+            tts.save(full_audio_path)
+            logger.info("Audio generation completed")
+        except Exception as e:
+            logger.error(f"TTS generation failed: {str(e)}")
+            # Continue without audio if TTS fails
 
-
-        for f in os.listdir(BASE_DIR):
-            if f.startswith("reply_") and f.endswith(".mp3"):
-                full_path = os.path.join(BASE_DIR, f)
-                if (time.time() - os.path.getctime(full_path)) > 300:
-                    os.remove(full_path)
+        # Clean up old audio files (run in background)
+        def cleanup_old_files():
+            try:
+                for f in os.listdir(BASE_DIR):
+                    if f.startswith("reply_") and f.endswith(".mp3"):
+                        full_path = os.path.join(BASE_DIR, f)
+                        if (time.time() - os.path.getctime(full_path)) > 300:
+                            os.remove(full_path)
+            except Exception as e:
+                logger.error(f"Cleanup failed: {str(e)}")
+        
+        # Run cleanup in background thread
+        cleanup_thread = threading.Thread(target=cleanup_old_files)
+        cleanup_thread.daemon = True
+        cleanup_thread.start()
 
 
         return jsonify({
@@ -150,6 +227,15 @@ def get_audio(audio_id):
     if not os.path.exists(full_audio_path):
         return "Audio not found", 404
     return send_file(full_audio_path, mimetype="audio/mpeg")
+
+@app.route("/status")
+def get_status():
+    """Return current processing status"""
+    return jsonify({
+        "models_loaded": models_loaded,
+        "models_loading": models_loading,
+        "status": "ready" if models_loaded else "loading_models"
+    })
 
 @app.route("/health")
 def health():
@@ -310,10 +396,18 @@ def index():
                 const formData = new FormData();
                 formData.append("audio", audioBlob, "recording.wav");
 
+                // Show processing status
+                responseEl.textContent = "🔄 Processing your message...";
+                statusEl.textContent = "Transcribing audio...";
+
                 const result = await fetch('/chat', {
                     method: 'POST',
                     body: formData
                 });
+
+                if (!result.ok) {
+                    throw new Error(`Server error: ${result.status}`);
+                }
 
                 const data = await result.json();
 
@@ -322,6 +416,7 @@ def index():
                 }
                 
                 responseEl.textContent = data.reply;
+                statusEl.textContent = "Generating audio response...";
 
                 // Play the audio reply
                 const audioUrl = `/audio/${data.audio_id}?t=${Date.now()}`;
@@ -331,6 +426,7 @@ def index():
             } catch (error) {
                 console.error('Error:', error);
                 responseEl.textContent = `❗ ${error.message || "Something went wrong"}`;
+                statusEl.textContent = "Error occurred. Please try again.";
             } finally {
                 isRecording = false;
                 startBtn.disabled = false;
