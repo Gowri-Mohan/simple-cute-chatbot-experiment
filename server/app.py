@@ -261,6 +261,13 @@ def get_status():
         "status": "ready" if models_loaded else "loading_models"
     })
 
+@app.route("/clear-sessions")
+def clear_sessions():
+    """Clear all conversation sessions (for debugging)"""
+    global conversation_sessions
+    conversation_sessions.clear()
+    return jsonify({"message": "All sessions cleared", "sessions_count": len(conversation_sessions)})
+
 @app.route("/health")
 def health():
     return {"status": "healthy", "message": "App is running"}, 200
