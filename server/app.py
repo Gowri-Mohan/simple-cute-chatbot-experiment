@@ -88,16 +88,19 @@ def transcribe_audio(file_path):
         if audio_input.ndim > 1:
             audio_input = np.mean(audio_input, axis=1)
         
-        input_features = processor(audio_input, sampling_rate=sample_rate, return_tensors="pt").input_features.to(device)
+        # Force English language to prevent auto-detection issues
+        input_features = processor(audio_input, sampling_rate=sample_rate, return_tensors="pt", language="en").input_features.to(device)
         
         with torch.no_grad():
-            # Use faster generation parameters
+            # Use faster generation parameters with forced English
             predicted_ids = model.generate(
                 input_features,
                 max_length=448,
                 num_beams=1,  # Faster than beam search
                 do_sample=False,
-                early_stopping=True
+                early_stopping=True,
+                task="transcribe",
+                language="en"
             )
         
         result = processor.batch_decode(predicted_ids, skip_special_tokens=True)[0]
@@ -169,7 +172,7 @@ def chat():
                     ollama_api_url, 
                     json={
                         "model": model_name, 
-                        "prompt": "\n".join(history) + "\nAI:", 
+                        "prompt": "You are a friendly AI chatbot. Respond naturally to conversations in English. Keep responses conversational and helpful.\n\n" + "\n".join(history) + "\nAI:", 
                         "stream": False,
                         "options": {
                             "temperature": 0.7,
